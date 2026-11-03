@@ -25,6 +25,7 @@ final class DroneLink {
     private volatile int actionFlags=0;
     private volatile long lastFlight=0;
     private volatile long started=0;
+    private volatile boolean missingReported=false;
 
     DroneLink(Network network,DroneProtocol.Profile profile,Listener listener) {
         this.network=network;this.profile=profile;this.listener=listener;
@@ -50,6 +51,7 @@ final class DroneLink {
                     socket.receive(packet);
                     if(packet.getLength()>0){
                         lastReply=SystemClock.elapsedRealtime();
+                        missingReported=false;
                         byte[] data=new byte[packet.getLength()];
                         System.arraycopy(packet.getData(),packet.getOffset(),data,0,packet.getLength());
                         listener.packet(data);
@@ -94,7 +96,8 @@ final class DroneLink {
             }
             return;
         }
-        if(now-started>5500 && !isFresh()) {
+        if(now-started>5500 && !isFresh() && !missingReported) {
+            missingReported=true;
             enabled=false; neutral();
             listener.disconnected("Sem resposta do drone. Controles bloqueados.");
         }
@@ -117,9 +120,12 @@ final class DroneLink {
         send(format.flight(profile,0,0,0,0,2,true),profile==DroneProtocol.Profile.FLOW_8800?8800:7099);
     }
     void close(){
-        if(!running.getAndSet(false))return;
+        if(!running.get())return;
         enabled=false;neutral();
+        // Best-effort neutral and stop BEFORE closing the transport.
+        send(format.flight(profile,0,0,0,0,0,false),profile==DroneProtocol.Profile.FLOW_8800?8800:7099);
         send(DroneProtocol.stopTransmission(),7099);
+        running.set(false);
         scheduler.shutdownNow();
         if(socket!=null)socket.close();
     }

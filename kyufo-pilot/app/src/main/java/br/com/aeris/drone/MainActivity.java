@@ -124,6 +124,21 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         status.setText(m);
         if(voice!=null)voice.speak(m,TextToSpeech.QUEUE_FLUSH,null,"aeris-"+SystemClock.uptimeMillis());
     });}
+    /** Never issue a takeoff/land action before speech has completed successfully. */
+    private void sayThen(String words,Runnable action){
+        if(voice==null){msg("Voz indisponível. Ação cancelada.");return;}
+        ui.post(()->{
+            status.setText(words);
+            String id="aeris-command-"+SystemClock.uptimeMillis();
+            voice.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener(){
+                @Override public void onStart(String utteranceId){}
+                @Override public void onDone(String utteranceId){if(id.equals(utteranceId))ui.post(action);}
+                @Override public void onError(String utteranceId){ui.post(()->msg("Falha na narração. Comando cancelado."));}
+            });
+            int result=voice.speak(words,TextToSpeech.QUEUE_FLUSH,null,id);
+            if(result!=TextToSpeech.SUCCESS)msg("Narração indisponível. Comando cancelado.");
+        });
+    }
     private void requestAccess(){
         ArrayList<String> perms=new ArrayList<>();
         if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)perms.add(Manifest.permission.ACCESS_FINE_LOCATION);
@@ -196,11 +211,11 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
             videoStatus.setText("Este protocolo usa vídeo fragmentado proprietário. Não há imagem implementada; nada simulado.");return;
         }
         try{
-            ArrayList<String> options=new ArrayList<>();options.add("--network-caching=220");options.add("--rtsp-tcp");
+            ArrayList<String> options=new ArrayList<>();options.add("--network-caching=220"); // Let VLC negotiate RTSP/RTP over UDP; cheap drones may reject TCP interleaving.
             vlc=new LibVLC(this,options);player=new MediaPlayer(vlc);
             player.attachViews(videoLayout,null,false,false);
             player.setEventListener(event->{
-                if(event.type==MediaPlayer.Event.Playing)ui.post(()->videoStatus.setText("Vídeo RTSP recebido da câmera"));
+                if(event.type==MediaPlayer.Event.Playing)ui.post(()->videoStatus.setText("Fluxo RTSP iniciado. Imagem exibida somente se chegar vídeo real."));
                 else if(event.type==MediaPlayer.Event.EncounteredError)ui.post(()->videoStatus.setText("A câmera RTSP não respondeu neste modelo."));
             });
             Media media=new Media(vlc,Uri.parse("rtsp://192.168.1.1:7070/webcam"));
@@ -227,8 +242,9 @@ public final class MainActivity extends Activity implements TextToSpeech.OnInitL
         if(drone==null||profile!=DroneProtocol.Profile.FLOW_8800||!controls||!drone.isFresh()){msg("Decolagem automática disponível apenas no protocolo FLOW-WIFI confirmado.");return;}
         new AlertDialog.Builder(this).setTitle("Confirmar ação no drone").setMessage("O mesmo comando alterna DECOLAR/POUSAR. Verifique o estado físico da aeronave, remova pessoas da área e confirme.")
             .setNegativeButton("Cancelar",null).setPositiveButton("Enviar comando real",(d,w)->{
-                say("Vou enviar o comando de decolagem ou pouso.");
-                ui.postDelayed(()->{if(drone!=null&&controls&&drone.isFresh())drone.takeoffOrLand();},1700);
+                sayThen("Vou enviar o comando de decolagem ou pouso.",()->{
+                    if(drone!=null&&controls&&drone.isFresh())drone.takeoffOrLand();
+                });
             }).show();
     }
     private void toggleAssistant(){
